@@ -108,7 +108,7 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
     }
     
     //Obtener ruta del directorio
-    func getDocumentsDirectory() -> URL{
+    func getDocumentsDirectory() throws -> URL{
         
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         let documentDirectory = paths[0]//selecciono el primer directorio
@@ -147,7 +147,7 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
         
         //guardar en disco
         do {
-            let imagePath = try getDocumentsDirectory().appendingPathComponent(imageName)
+            let imagePath = try self.getDocumentsDirectory().appendingPathComponent(imageName)
             
             if let jpegData = UIImageJPEGRepresentation(image, 80){
                 try jpegData.write(to: imagePath, options: [.atomicWrite])
@@ -155,7 +155,7 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
             
             if let thumbail = resizeImage(image: image, to: 200){
                 
-                let thumbPath = try getDocumentsDirectory().appendingPathComponent(thumbName)
+                let thumbPath:URL = try self.getDocumentsDirectory().appendingPathComponent(thumbName)
                 
                 if let jpegData = UIImageJPEGRepresentation(thumbail, 80){
                     try jpegData.write(to: thumbPath, options: [.atomicWrite])
