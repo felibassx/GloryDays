@@ -11,17 +11,25 @@ import AVFoundation
 import Photos
 import Speech
 
+import CoreSpotlight
+import MobileCoreServices
+
 private let reuseIdentifier = "cell"
 
-class MemoriesCollectionViewController: UICollectionViewController, UIImagePickerControllerDelegate, UINavigationControllerDelegate, AVAudioRecorderDelegate {
+class MemoriesCollectionViewController: UICollectionViewController, UIImagePickerControllerDelegate, UINavigationControllerDelegate, AVAudioRecorderDelegate, UISearchBarDelegate {
     
     //array para cargar las memorias, es de tipo url porque son archivos
     var memories : [URL] = []
+    var filteredMemories : [URL] = []
+    
     var currentMemory : URL!
     
-    //vaariable para el audio grabado
-    var audioRecorder : AVAudioRecorder!
+    //variables para el audio
+    var audioPlayer : AVAudioPlayer?
+    var audioRecorder : AVAudioRecorder?
     var recordingURL : URL!
+    
+    var searchQuery : CSSearchQuery?
     
 
     override func viewDidLoad() {
@@ -79,49 +87,38 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
         
     }
     
-    func loadMemories(){
-        
-        //1. vaciar memorias para no duplicar
+    func loadMemories() {
         self.memories.removeAll()
         
-        //2. se obtienen los archivos desde la ruta indicada
-        guard let files = try? FileManager.default.contentsOfDirectory(at: getDocumentsDirectory(), includingPropertiesForKeys: nil, options: [])else{
+        guard let files = try? FileManager.default.contentsOfDirectory(at: getDocumentsDirectory(), includingPropertiesForKeys: nil, options: []) else {
             return
         }
         
-        //3. se recorren los archivos encontrados
-        for file in files{
+        for file in files {
             
             let fileName = file.lastPathComponent
             
-            //4. comprobar .thumb
-            if fileName.hasSuffix(".thumb"){
-                
-                //5. quitamos la extensión
+            if fileName.hasSuffix(".thumb") {
                 let noExtension = fileName.replacingOccurrences(of: ".thumb", with: "")
                 
-                if let memoryPath = try? getDocumentsDirectory().appendingPathComponent(noExtension){
-                
-                    //6. cargamos en el array memories
-                    memories.append(memoryPath)
-                    
-                }
+                let memoryPath =  getDocumentsDirectory().appendingPathComponent(noExtension)
+                memories.append(memoryPath)
                 
             }
-            
         }
         
-        //se recarga la sección número 1
+        
+        filteredMemories = memories
+        
         collectionView?.reloadSections(IndexSet(integer: 1))
-    
+        
     }
     
     //Obtener ruta del directorio
-    func getDocumentsDirectory() throws -> URL{
-        
-        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
-        let documentDirectory = paths[0]//selecciono el primer directorio
-        return documentDirectory
+    func getDocumentsDirectory() -> URL {
+        let paths = FileManager.default.urls(for:.documentDirectory, in: .userDomainMask)
+        let documentsDirectory = paths[0]
+        return documentsDirectory
     }
     
     //Añadir imagen
@@ -148,34 +145,34 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
     
     //Metodo para añadir nueva memoria
     func addNewMemory(image: UIImage){
-    
         let memoryName = "memory-\(Date().timeIntervalSince1970)"
         
         let imageName = "\(memoryName).jpg"
         let thumbName = "\(memoryName).thumb"
         
-        //guardar en disco
         do {
-            let imagePath = try self.getDocumentsDirectory().appendingPathComponent(imageName)
             
-            if let jpegData = UIImageJPEGRepresentation(image, 80){
+            let imagePath = getDocumentsDirectory().appendingPathComponent(imageName)
+            
+            if let jpegData = UIImageJPEGRepresentation(image, 80) {
                 try jpegData.write(to: imagePath, options: [.atomicWrite])
             }
             
-            if let thumbail = resizeImage(image: image, to: 200){
+            
+            if let thumbail = resizeImage(image: image, to: 200) {
+                let thumbPath = getDocumentsDirectory().appendingPathComponent(thumbName)
                 
-                let thumbPath:URL = try self.getDocumentsDirectory().appendingPathComponent(thumbName)
-                
-                if let jpegData = UIImageJPEGRepresentation(thumbail, 80){
+                if let jpegData = UIImageJPEGRepresentation(thumbail, 80) {
                     try jpegData.write(to: thumbPath, options: [.atomicWrite])
                 }
+                
             }
             
             
         } catch {
-            print("A fallado la escritura en el disco")
+            print("Ha fallado la escritura en disco")
         }
-    
+        
     }
     
     //generar la miniatura
@@ -195,19 +192,21 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
     }
     
     //generar archivos
-    func imageURL(for memory: URL) -> URL{
+    func imageURL(for memory: URL) -> URL {
         return memory.appendingPathExtension("jpg")
     }
     
-    func thumbnailURL(for memory: URL) -> URL{
+    func thumbnailURL(for memory: URL) -> URL {
         return memory.appendingPathExtension("thumb")
     }
     
-    func audioURL(for memory: URL) -> URL{
+    
+    func audioURL(for memory: URL) -> URL {
         return memory.appendingPathExtension("m4a")
     }
     
-    func transcriptionURL(for memory: URL) -> URL{
+    
+    func transcriptionURL(for memory: URL) -> URL {
         return memory.appendingPathExtension("txt")
     }
     
@@ -237,7 +236,7 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
         if section == 0{
             return 0
         }else{
-            return self.memories.count
+            return self.filteredMemories.count
         }
     }
 
@@ -245,26 +244,26 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
     override func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: reuseIdentifier, for: indexPath) as! MemoryCell
         
-        let memory = self.memories[indexPath.row]
-        let memoryName = try! self.thumbnailURL(for: memory).path
+        let memory = self.filteredMemories[indexPath.row]
+        let memoryName = self.thumbnailURL(for: memory).path
         let image = UIImage(contentsOfFile: memoryName)
-        
         cell.imageView.image = image
         
-        //Se aaplican gestureRecognizers
-        if cell.gestureRecognizers == nil{
-        
+        if cell.gestureRecognizers == nil {
+            
             let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(self.memoryLongPressed))
             recognizer.minimumPressDuration = 0.3
             cell.addGestureRecognizer(recognizer)
             
-            //estilizar la celda
             cell.layer.borderColor = UIColor.white.cgColor
             cell.layer.borderWidth = 4
             cell.layer.cornerRadius = 10
+            
         }
-    
+        
+        
         return cell
+
     }
     
     //action para gesture
@@ -275,7 +274,7 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
             //obtener la celda seleccionada
             let cell = sender.view as! MemoryCell
             if let index = collectionView?.indexPath(for: cell){
-                self.currentMemory = self.memories[index.row]
+                self.currentMemory = self.filteredMemories[index.row]
                 
                 self.startRecordingMemory()
             }
@@ -292,30 +291,33 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
     
     func startRecordingMemory(){
         
+        audioPlayer?.stop()
+        
         collectionView?.backgroundColor = UIColor(red: 0.6, green: 0.0, blue: 0.0, alpha: 1.0)
         
         let recordingSession = AVAudioSession.sharedInstance()
         
-        do {
+        do{
             
-            try recordingSession.setCategory(AVAudioSessionCategoryRecord)
+            try recordingSession.setCategory(AVAudioSessionCategoryPlayAndRecord, with: .defaultToSpeaker)
             try recordingSession.setActive(true)
             
-            
-            let recordingSettings = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                                     AVSampleRateKey: 44100,
-                                     AVNumberOfChannelsKey: 2,
-                                     AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue]
-            
+            let recordingSettings = [ AVFormatIDKey : Int(kAudioFormatMPEG4AAC),
+                                      AVSampleRateKey : 44100,
+                                      AVNumberOfChannelsKey : 2,
+                                      AVEncoderAudioQualityKey : AVAudioQuality.high.rawValue
+            ]
             
             audioRecorder = try AVAudioRecorder(url: recordingURL, settings: recordingSettings)
-            audioRecorder.delegate = self
-            audioRecorder.record()
+            audioRecorder?.delegate = self
+            audioRecorder?.record()
             
-        } catch let error{
+            
+        } catch let error {
             print(error)
             finishRecordingMemory(success: false)
         }
+        
     }
     
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
@@ -324,36 +326,31 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
         }
     }
     
-    func finishRecordingMemory(success: Bool){
+    func finishRecordingMemory(success: Bool) {
         
-        collectionView?.backgroundColor = UIColor(red: 97.0/255.0, green: 86.9/255.0, blue: 110.0/255.0, alpha: 1.0)
+        collectionView?.backgroundColor = UIColor(red: 97.0/255.0, green: 86.0/255.0, blue: 110.0/255.0, alpha: 1.0)
         
-        audioRecorder.stop()
+        audioRecorder?.stop()
         
-        if success{
-            //grabar y transcribir
+        if success {
             do {
+                let memoryAudioURL = self.currentMemory.appendingPathExtension("m4a")
                 
-                let memoryAudioURL = try self.currentMemory.appendingPathExtension("m4a")
-                
-                //guardar o modificar archivos
                 let fileManager = FileManager.default
                 
-                if fileManager.fileExists(atPath: memoryAudioURL.path){
-                    //sustituir el actual archivo por uno nuevo
+                if fileManager.fileExists(atPath: memoryAudioURL.path) {
                     try fileManager.removeItem(at: memoryAudioURL)
                 }
                 
-                //Movemos el archivo a la ruta del dispositivo
                 try fileManager.moveItem(at: recordingURL, to: memoryAudioURL)
                 
                 self.transcribeAudioToText(memory: self.currentMemory)
                 
+                
             } catch let error {
-                print("Ha ocurrido un error: \(error)")
+                print("Ha habido un error \(error)")
             }
         }
-        
         
     }
     
@@ -365,11 +362,11 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
         let recognizer = SFSpeechRecognizer()
         
         let request = SFSpeechURLRecognitionRequest(url: audio)
-        recognizer?.recognitionTask(with: request, resultHandler: {[unowned self] (result, error) in
+        recognizer?.recognitionTask(with: request, resultHandler: {(result, error) in
             
             guard let result = result else{
                 
-                print("Ha ocurrido el siguiente error: \(error)")
+                print("Ha ocurrido un error al transcribir el audio a texto.")
                 return
                 
             }
@@ -380,7 +377,8 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
                 do{
                     
                     try text.write(to: transcription, atomically: true, encoding: String.Encoding.utf8)
-                
+                    self.indexMemory(memory: memory, text:text)
+                    
                 }catch{
                     print("Ha ocurrido un error al guardar la transcripción")
                 }
@@ -389,6 +387,25 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
         
         
         
+    }
+    
+    func indexMemory(memory: URL, text: String){
+        let attributeSet = CSSearchableItemAttributeSet(itemContentType: kUTTypeText as String)
+        attributeSet.title = "Recuerdos de GloryDays"
+        attributeSet.contentDescription = text
+        attributeSet.thumbnailURL = thumbnailURL(for: memory)
+        
+        let item = CSSearchableItem(uniqueIdentifier: memory.path, domainIdentifier: "cl.felibass", attributeSet: attributeSet)
+        
+        item.expirationDate = Date.distantFuture
+        
+        CSSearchableIndex.default().indexSearchableItems([item]) { (error) in
+            if let error = error {
+                print("Ha ocurrido un error al indexar \(error)")
+            }else{
+                print("Todo a salido OK al idexar el texto \(text)")
+            }
+        }
     }
     
     
@@ -400,16 +417,102 @@ class MemoriesCollectionViewController: UICollectionViewController, UIImagePicke
         return header
     }
     
-    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, referenceForHeaderInSection section: Int) -> CGSize {
-        
+    
+    //para que la barra de busqueda solo aparezca en la seccion 0
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, referenceSizeForHeaderInSection section: Int) -> CGSize{
         if section == 0{
             return CGSize(width: 0, height: 50)
         }else{
             return CGSize.zero
         }
+    }
+    
+    
+    //Reproducir audio y obtener transcripcion
+    override func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        let memory = self.filteredMemories[indexPath.row]
+        
+        let fileManager = FileManager.default
+        
+        do {
+            let audioName = audioURL(for: memory)
+            let transcriptionName = transcriptionURL(for: memory)
+            
+            if fileManager.fileExists(atPath: audioName.path){
+                self.audioPlayer = try AVAudioPlayer(contentsOf: audioName)
+                self.audioPlayer?.play()
+            }
+            
+            if fileManager.fileExists(atPath: transcriptionName.path){
+                let content = try String(contentsOf: transcriptionName)
+                print(content)
+            }
+            
+        } catch  {
+            print("Error al cargar el audio")
+        }
         
     }
-
+    
+    func filterMemories(text: String){
+        
+        guard text.characters.count > 0 else {
+            self.filteredMemories = self.memories
+            
+            UIView.performWithoutAnimation {
+                collectionView?.reloadSections(IndexSet(integer: 1))
+            }
+            
+            return
+        }
+        
+        
+        
+        
+        var allTheItems : [CSSearchableItem] = []
+        
+        self.searchQuery?.cancel()
+        
+        let queryString = "contentDescription == \"*\(text)*\"c"
+        self.searchQuery = CSSearchQuery(queryString: queryString, attributes: nil)
+        
+        self.searchQuery?.foundItemsHandler = { items in
+            allTheItems.append(contentsOf: items)
+        }
+        
+        self.searchQuery?.completionHandler = { error in
+            DispatchQueue.main.async { [unowned self] in
+                self.activateFilter(matches: allTheItems)
+            }
+        }
+        
+        self.searchQuery?.start()
+        
+    }
+    
+    func activateFilter(matches: [CSSearchableItem]){
+        
+        self.filteredMemories = matches.map { item in
+            let uniqueID = item.uniqueIdentifier
+            let url = URL(fileURLWithPath: uniqueID)
+            return url
+        }
+        
+        UIView.performWithoutAnimation {
+            collectionView?.reloadSections(IndexSet(integer: 1))
+        }
+        
+        
+    }
+    
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        self.filterMemories(text: searchText)
+    }
+    
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        searchBar.resignFirstResponder()
+    }
+    
     // MARK: UICollectionViewDelegate
 
     /*
